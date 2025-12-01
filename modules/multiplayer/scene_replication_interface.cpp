@@ -35,6 +35,7 @@
 #include "core/debugger/engine_debugger.h"
 #include "core/io/marshalls.h"
 #include "scene/main/node.h"
+#include "core/math/math_funcs.h" // 确保包含数学库
 
 #define MAKE_ROOM(m_amount)             \
 	if (packet_cache.size() < m_amount) \
@@ -51,6 +52,166 @@ _FORCE_INLINE_ void SceneReplicationInterface::_profile_node_data(const String &
 	}
 }
 #endif
+
+// 自定义编码函数：根据 Config 中的精度设置写入 buffer
+static Error _encode_custom_state(const Vector<const Variant *> &p_vars, const List<NodePath> &p_props, SceneReplicationConfig *p_config, uint8_t *p_buffer, int &r_len) {
+	int ofs = 0;
+	int prop_idx = 0;
+	
+	// 遍历所有要同步的属性
+	for (const NodePath &path : p_props) {
+		const Variant &val = *p_vars[prop_idx];
+		prop_idx++;
+
+		// 获取精度设置 (如果没有config则默认FULL)
+		SceneReplicationConfig::ReplicationPrecision prec = p_config ? p_config->property_get_replication_precision(path) : SceneReplicationConfig::REPLICATION_PRECISION_FULL;
+		
+		// 1. 处理浮点数 (FLOAT)
+		if (val.get_type() == Variant::FLOAT) {
+			float f_val = val;
+			if (prec == SceneReplicationConfig::REPLICATION_PRECISION_HALF) {
+				if (p_buffer) encode_uint16(Math::make_half_float(f_val), &p_buffer[ofs]);
+				ofs += 2;
+				continue;
+			} else if (prec == SceneReplicationConfig::REPLICATION_PRECISION_QUANTIZED) {
+				float step = p_config->property_get_replication_step(path);
+				if (step > 0) {
+					// 简单的量化：除以步长转为 int32。
+					// 注意：如果数据范围很小（如0-1），可以优化为int8/int16，这里为了通用性暂用int32
+					int32_t q_val = (int32_t)(f_val / step);
+					if (p_buffer) encode_uint32(q_val, &p_buffer[ofs]);
+					ofs += 4;
+					continue;
+				}
+			}
+		}
+		
+		// 2. 处理向量 (VECTOR2)
+		if (val.get_type() == Variant::VECTOR2) {
+			Vector2 v_val = val;
+			if (prec == SceneReplicationConfig::REPLICATION_PRECISION_HALF) {
+				if (p_buffer) {
+					encode_uint16(Math::make_half_float(v_val.x), &p_buffer[ofs]);
+					encode_uint16(Math::make_half_float(v_val.y), &p_buffer[ofs + 2]);
+				}
+				ofs += 4;
+				continue;
+			}
+			// Vector2 量化逻辑同理，此处省略以节省篇幅，可参考Float自行实现
+		}
+
+		// 3. 处理向量 (VECTOR3)
+		if (val.get_type() == Variant::VECTOR3) {
+			Vector3 v_val = val;
+			if (prec == SceneReplicationConfig::REPLICATION_PRECISION_HALF) {
+				if (p_buffer) {
+					encode_uint16(Math::make_half_float(v_val.x), &p_buffer[ofs]);
+					encode_uint16(Math::make_half_float(v_val.y), &p_buffer[ofs + 2]);
+					encode_uint16(Math::make_half_float(v_val.z), &p_buffer[ofs + 4]);
+				}
+				ofs += 6; // 3 * 2 bytes
+				continue;
+			}
+		}
+
+		// 4. 默认 fallback：使用 Godot 原生编码
+		int len = 0;
+		// 注意：这里我们不能一次编完所有，只能一个一个编，因为我们要穿插自定义编码
+		// 为了简单，我们对单个 Variant 调用 encode。
+		// 但原生API通常带压缩，这里为了混合使用，我们调用 encode_variant (无压缩头) 或者 encode_and_compress (带头)
+		// 这里使用 encode_and_compress_variant 确保兼容性
+		Error err = MultiplayerAPI::encode_and_compress_variant(val, p_buffer ? &p_buffer[ofs] : nullptr, len, false); 
+		if (err != OK) return err;
+		ofs += len;
+	}
+
+	r_len = ofs;
+	return OK;
+}
+
+// 自定义解码函数
+static Error _decode_custom_state(Vector<Variant> &r_vars, const uint8_t *p_buffer, int p_len, int &r_consumed, const List<NodePath> &p_props, SceneReplicationConfig *p_config) {
+	int ofs = 0;
+	int prop_idx = 0;
+
+	for (const NodePath &path : p_props) {
+		if (ofs >= p_len) return ERR_INVALID_DATA;
+		
+        // 获取配置
+		SceneReplicationConfig::ReplicationPrecision prec = p_config ? p_config->property_get_replication_precision(path) : SceneReplicationConfig::REPLICATION_PRECISION_FULL;
+		Variant::Type type = p_config ? p_config->property_get_type(path) : Variant::NIL;
+
+		Variant &res_val = r_vars.write[prop_idx];
+		bool handled = false;
+
+        // 仅当明确设置了精度且已知类型时，尝试自定义解码
+		if (prec != SceneReplicationConfig::REPLICATION_PRECISION_FULL && type != Variant::NIL) {
+            
+            // --- FLOAT 解码 ---
+            if (type == Variant::FLOAT) {
+                if (prec == SceneReplicationConfig::REPLICATION_PRECISION_HALF) {
+                    if (p_len - ofs >= 2) {
+                        res_val = Math::half_to_float(decode_uint16(&p_buffer[ofs]));
+                        ofs += 2;
+                        handled = true;
+                    }
+                } else if (prec == SceneReplicationConfig::REPLICATION_PRECISION_QUANTIZED) {
+                    if (p_len - ofs >= 4) {
+                        float step = p_config->property_get_replication_step(path);
+                        int32_t q_val = decode_uint32(&p_buffer[ofs]);
+                        res_val = (step > 0) ? (float)q_val * step : (float)q_val; // 防止除0
+                        ofs += 4;
+                        handled = true;
+                    }
+                }
+            } 
+            // --- VECTOR2 解码 ---
+            else if (type == Variant::VECTOR2) {
+                if (prec == SceneReplicationConfig::REPLICATION_PRECISION_HALF) {
+                    if (p_len - ofs >= 4) {
+                        float x = Math::half_to_float(decode_uint16(&p_buffer[ofs]));
+                        float y = Math::half_to_float(decode_uint16(&p_buffer[ofs + 2]));
+                        res_val = Vector2(x, y);
+                        ofs += 4;
+                        handled = true;
+                    }
+                } 
+                // 此处可继续补充 VECTOR2 的 QUANTIZED 逻辑
+            }
+            // --- VECTOR3 解码 ---
+            else if (type == Variant::VECTOR3) {
+                if (prec == SceneReplicationConfig::REPLICATION_PRECISION_HALF) {
+                    if (p_len - ofs >= 6) {
+                        float x = Math::half_to_float(decode_uint16(&p_buffer[ofs]));
+                        float y = Math::half_to_float(decode_uint16(&p_buffer[ofs + 2]));
+                        float z = Math::half_to_float(decode_uint16(&p_buffer[ofs + 4]));
+                        res_val = Vector3(x, y, z);
+                        ofs += 6;
+                        handled = true;
+                    }
+                }
+                // 此处可继续补充 VECTOR3 的 QUANTIZED 逻辑
+            }
+		}
+
+        // 如果上面没有处理 (比如精度是 Full，或者类型未知，或者缓冲区不足)，回退到原生解码
+		if (!handled) {
+			int len = 0;
+            // 注意：原生解码依赖头部 Header，如果发送端(Encode)走了自定义逻辑却没发Header，这里会失败。
+            // 只要 Encode 和 Decode 逻辑对得上就行。
+            // 我们的 Encode 逻辑是：如果走了自定义就不写 Header。
+            // 所以这里必须保证：只要 Encode 走了分支，Decode 必须走分支。
+			Error err = MultiplayerAPI::decode_and_decompress_variant(res_val, &p_buffer[ofs], p_len - ofs, &len, false);
+			if (err != OK) return err;
+			ofs += len;
+		}
+		prop_idx++;
+	}
+
+	r_consumed = ofs;
+	return OK;
+}
+
 
 SceneReplicationInterface::TrackedNode &SceneReplicationInterface::_track(const ObjectID &p_id) {
 	if (!tracked_nodes.has(p_id)) {
@@ -723,6 +884,7 @@ void SceneReplicationInterface::_send_delta(int p_peer, const HashSet<ObjectID> 
 		uint64_t last_usec = p_last_watch_usecs.has(oid) ? p_last_watch_usecs[oid] : 0;
 		uint64_t indexes;
 		List<Variant> delta = sync->get_delta_state(p_usec, last_usec, indexes);
+        List<NodePath> delta_props = sync->get_delta_properties(indexes); 
 
 		if (!delta.size()) {
 			continue; // Nothing to update.
@@ -737,7 +899,7 @@ void SceneReplicationInterface::_send_delta(int p_peer, const HashSet<ObjectID> 
 			i++;
 		}
 		int size;
-		Error err = MultiplayerAPI::encode_and_compress_variants(vptr, varp.size(), nullptr, size);
+		Error err = _encode_custom_state(varp, delta_props, sync->get_replication_config_ptr().ptr(), nullptr, size);
 		ERR_CONTINUE_MSG(err != OK, "Unable to encode delta state.");
 
 		ERR_CONTINUE_MSG(size > delta_mtu, vformat("Synchronizer delta bigger than MTU will not be sent (%d > %d): %s", size, delta_mtu, sync->get_path()));
@@ -751,7 +913,7 @@ void SceneReplicationInterface::_send_delta(int p_peer, const HashSet<ObjectID> 
 			ofs += encode_uint32(sync->get_net_id(), &ptr[ofs]);
 			ofs += encode_uint64(indexes, &ptr[ofs]);
 			ofs += encode_uint32(size, &ptr[ofs]);
-			MultiplayerAPI::encode_and_compress_variants(vptr, varp.size(), &ptr[ofs], size);
+			_encode_custom_state(varp, delta_props, sync->get_replication_config_ptr().ptr(), &ptr[ofs], size);
 			ofs += size;
 		}
 #ifdef DEBUG_ENABLED
@@ -786,7 +948,7 @@ Error SceneReplicationInterface::on_delta_receive(int p_from, const uint8_t *p_b
 		Vector<Variant> vars;
 		vars.resize(props.size());
 		int consumed = 0;
-		Error err = MultiplayerAPI::decode_and_decompress_variants(vars, p_buffer + ofs, size, consumed);
+        Error err = _decode_custom_state(vars, p_buffer + ofs, size, consumed, props, sync->get_replication_config_ptr().ptr());
 		ERR_FAIL_COND_V(err != OK, err);
 		ERR_FAIL_COND_V(uint32_t(consumed) != size, ERR_INVALID_DATA);
 		err = MultiplayerSynchronizer::set_state(props, node, vars);
@@ -828,8 +990,8 @@ void SceneReplicationInterface::_send_sync(int p_peer, const HashSet<ObjectID> &
 		const List<NodePath> props = sync->get_replication_config_ptr()->get_sync_properties();
 		Error err = MultiplayerSynchronizer::get_state(props, node, vars, varp);
 		ERR_CONTINUE_MSG(err != OK, "Unable to retrieve sync state.");
-		err = MultiplayerAPI::encode_and_compress_variants(varp.ptrw(), varp.size(), nullptr, size);
-		ERR_CONTINUE_MSG(err != OK, "Unable to encode sync state.");
+        err = _encode_custom_state(varp, props, sync->get_replication_config_ptr().ptr(), nullptr, size);
+        ERR_CONTINUE_MSG(err != OK, "Unable to calculate custom sync state size.");
 		// TODO Handle single state above MTU.
 		ERR_CONTINUE_MSG(size > sync_mtu, vformat("Node states bigger than MTU will not be sent (%d > %d): %s", size, sync_mtu, node->get_path()));
 		if (ofs + 4 + 4 + size > sync_mtu) {
@@ -840,7 +1002,7 @@ void SceneReplicationInterface::_send_sync(int p_peer, const HashSet<ObjectID> &
 		if (size) {
 			ofs += encode_uint32(sync->get_net_id(), &ptr[ofs]);
 			ofs += encode_uint32(size, &ptr[ofs]);
-			MultiplayerAPI::encode_and_compress_variants(varp.ptrw(), varp.size(), &ptr[ofs], size);
+            _encode_custom_state(varp, props, sync->get_replication_config_ptr().ptr(), &ptr[ofs], size);
 			ofs += size;
 		}
 #ifdef DEBUG_ENABLED
@@ -888,7 +1050,8 @@ Error SceneReplicationInterface::on_sync_receive(int p_from, const uint8_t *p_bu
 		Vector<Variant> vars;
 		vars.resize(props.size());
 		int consumed;
-		Error err = MultiplayerAPI::decode_and_decompress_variants(vars, &p_buffer[ofs], size, consumed);
+		Error err = _decode_custom_state(vars, &p_buffer[ofs], size, consumed, props, sync->get_replication_config_ptr().ptr());
+
 		ERR_FAIL_COND_V(err, err);
 		err = MultiplayerSynchronizer::set_state(props, node, vars);
 		ERR_FAIL_COND_V(err, err);

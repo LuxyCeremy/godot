@@ -58,6 +58,7 @@ private:
 		ReplicationMode mode = REPLICATION_MODE_ALWAYS;
 		ReplicationPrecision precision = REPLICATION_PRECISION_FULL;
         float step = 0.001f; // 仅当 precision == REPLICATION_PRECISION_QUANTIZED 时使用
+    	Variant::Type type = Variant::NIL; // 明确存储类型
 
 		bool operator==(const ReplicationProperty &p_to) {
 			return name == p_to.name;
@@ -116,6 +117,8 @@ public:
 
     float property_get_replication_step(const NodePath &p_path);
     void property_set_replication_step(const NodePath &p_path, float p_step);
+	Variant::Type property_get_type(const NodePath &p_path);
+	void property_set_type(const NodePath &p_path, Variant::Type p_type);
 
 	SceneReplicationConfig() {}
 };

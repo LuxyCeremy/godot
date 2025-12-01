@@ -61,7 +61,11 @@ bool SceneReplicationConfig::_set(const StringName &p_name, const Variant &p_val
         } else if (what == "step") {
             property_set_replication_step(prop.name, p_value);
             return true;
-        }
+        } else if (what == "type") {
+			ERR_FAIL_COND_V(p_value.get_type() != Variant::INT, false);
+			property_set_type(prop.name, (Variant::Type)p_value.operator int());
+			return true;
+		}
 		ERR_FAIL_COND_V(p_value.get_type() != Variant::BOOL, false);
 		if (what == "spawn") {
 			property_set_spawn(prop.name, p_value);
@@ -102,7 +106,11 @@ bool SceneReplicationConfig::_get(const StringName &p_name, Variant &r_ret) cons
         } else if (what == "step") {
             r_ret = prop.step;
             return true;
-        }
+        }    
+		else if (what == "type") {
+			r_ret = prop.type;
+			return true;
+		}
 	}
 	return false;
 }
@@ -114,6 +122,7 @@ void SceneReplicationConfig::_get_property_list(List<PropertyInfo> *p_list) cons
 		p_list->push_back(PropertyInfo(Variant::INT, "properties/" + itos(i) + "/replication_mode", PROPERTY_HINT_ENUM, "Never,Always,On Change", PROPERTY_USAGE_NO_EDITOR | PROPERTY_USAGE_INTERNAL));
 		p_list->push_back(PropertyInfo(Variant::INT, "properties/" + itos(i) + "/precision", PROPERTY_HINT_ENUM, "Full,Half,Quantized", PROPERTY_USAGE_NO_EDITOR | PROPERTY_USAGE_INTERNAL));
         p_list->push_back(PropertyInfo(Variant::FLOAT, "properties/" + itos(i) + "/step", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR | PROPERTY_USAGE_INTERNAL));
+		p_list->push_back(PropertyInfo(Variant::INT, "properties/" + itos(i) + "/type", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR | PROPERTY_USAGE_INTERNAL));
 	}
 }
 
@@ -317,6 +326,23 @@ void SceneReplicationConfig::property_set_replication_step(const NodePath &p_pat
     dirty = true;
 }
 /// --精度和步长
+/// 类型
+Variant::Type SceneReplicationConfig::property_get_type(const NodePath &p_path) {
+    List<ReplicationProperty>::Element *E = properties.find(p_path);
+    ERR_FAIL_COND_V(!E, Variant::NIL);
+    return E->get().type;
+}
+
+void SceneReplicationConfig::property_set_type(const NodePath &p_path, Variant::Type p_type) {
+    List<ReplicationProperty>::Element *E = properties.find(p_path);
+    ERR_FAIL_COND(!E);
+    if (E->get().type == p_type) {
+        return;
+    }
+    E->get().type = p_type;
+    dirty = true;
+}
+/// --类型
 void SceneReplicationConfig::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_properties"), &SceneReplicationConfig::get_properties);
 	ClassDB::bind_method(D_METHOD("add_property", "path", "index"), &SceneReplicationConfig::add_property, DEFVAL(-1));
@@ -331,6 +357,8 @@ void SceneReplicationConfig::_bind_methods() {
     ClassDB::bind_method(D_METHOD("property_set_replication_precision", "path", "precision"), &SceneReplicationConfig::property_set_replication_precision);
     ClassDB::bind_method(D_METHOD("property_get_replication_step", "path"), &SceneReplicationConfig::property_get_replication_step);
     ClassDB::bind_method(D_METHOD("property_set_replication_step", "path", "step"), &SceneReplicationConfig::property_set_replication_step);
+    ClassDB::bind_method(D_METHOD("property_get_type", "path"), &SceneReplicationConfig::property_get_type);
+    ClassDB::bind_method(D_METHOD("property_set_type", "path", "type"), &SceneReplicationConfig::property_set_type);
 
 	BIND_ENUM_CONSTANT(REPLICATION_MODE_NEVER);
 	BIND_ENUM_CONSTANT(REPLICATION_MODE_ALWAYS);

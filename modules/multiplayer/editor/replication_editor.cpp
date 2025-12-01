@@ -116,7 +116,6 @@ void ReplicationEditor::_pick_new_property() {
 	pick_node->get_filter_line_edit()->clear();
 	pick_node->get_filter_line_edit()->grab_focus();
 }
-
 void ReplicationEditor::_add_sync_property(String p_path) {
 	config = current->get_replication_config();
 
@@ -138,6 +137,26 @@ void ReplicationEditor::_add_sync_property(String p_path) {
 
 	undo_redo->add_do_method(config.ptr(), "add_property", p_path);
 	undo_redo->add_undo_method(config.ptr(), "remove_property", p_path);
+
+    // --- [新增逻辑：自动探测并保存 Type] ---
+    Node *root = current->get_node(current->get_root_path());
+    if (root) {
+        String path = p_path.substr(0, p_path.find_char(':'));
+		String subpath = p_path.substr(path.size());
+		Node *node = root->get_node_or_null(path);
+        if (!node) node = root; // Handle relative paths or root itself
+        
+        bool valid = false;
+        // 获取当前值来判断类型
+        Variant val = node->get(subpath, &valid);
+        if (valid) {
+            // 保存类型
+            undo_redo->add_do_method(config.ptr(), "property_set_type", p_path, val.get_type());
+            // Undo 时可能不需要显式移除 type，因为 remove_property 会把整个 entry 删掉
+        }
+    }
+    // --- [新增结束] ---
+
 	undo_redo->add_do_method(this, "_update_config");
 	undo_redo->add_undo_method(this, "_update_config");
 	undo_redo->commit_action();
@@ -255,7 +274,7 @@ ReplicationEditor::ReplicationEditor() {
 
 	tree = memnew(Tree);
 	tree->set_hide_root(true);
-	tree->set_columns(4);
+	tree->set_columns(6);
 	tree->set_column_titles_visible(true);
 	tree->set_column_title(0, TTR("Properties"));
 	tree->set_column_expand(0, true);
@@ -265,7 +284,15 @@ ReplicationEditor::ReplicationEditor() {
 	tree->set_column_title(2, TTR("Replicate"));
 	tree->set_column_custom_minimum_width(2, 100);
 	tree->set_column_expand(2, false);
-	tree->set_column_expand(3, false);
+	/// 新增：precision、step
+    tree->set_column_title(3, TTR("Precision"));
+    tree->set_column_custom_minimum_width(3, 100);
+    tree->set_column_expand(3, false);
+    tree->set_column_title(4, TTR("Step"));
+    tree->set_column_custom_minimum_width(4, 80);
+    tree->set_column_expand(4, false);
+	/// --新增
+	tree->set_column_expand(5, false);
 	tree->create_item();
 	tree->connect("button_clicked", callable_mp(this, &ReplicationEditor::_tree_button_pressed));
 	tree->connect("item_edited", callable_mp(this, &ReplicationEditor::_tree_item_edited));
@@ -392,18 +419,20 @@ void ReplicationEditor::_add_pressed() {
 void ReplicationEditor::_np_text_submitted(const String &p_newtext) {
 	_add_pressed();
 }
-
 void ReplicationEditor::_tree_item_edited() {
 	TreeItem *ti = tree->get_edited();
 	if (!ti || config.is_null()) {
 		return;
 	}
 	int column = tree->get_edited_column();
-	ERR_FAIL_COND(column < 1 || column > 2);
+    // 允许 1, 2, 3, 4 列被编辑
+	ERR_FAIL_COND(column < 1 || column > 4); 
+
 	const NodePath prop = ti->get_metadata(0);
 	EditorUndoRedoManager *undo_redo = EditorUndoRedoManager::get_singleton();
 
-	if (column == 1) {
+	if (column == 1) { // Spawn
+        // ... (保持原样)
 		undo_redo->create_action(TTR("Set spawn property"));
 		bool value = ti->is_checked(column);
 		undo_redo->add_do_method(config.ptr(), "property_set_spawn", prop, value);
@@ -411,11 +440,13 @@ void ReplicationEditor::_tree_item_edited() {
 		undo_redo->add_do_method(this, "_update_value", prop, column, value ? 1 : 0);
 		undo_redo->add_undo_method(this, "_update_value", prop, column, value ? 0 : 1);
 		undo_redo->commit_action();
-	} else if (column == 2) {
+
+	} else if (column == 2) { // Mode
+        // ... (保持原样)
 		undo_redo->create_action(TTR("Set sync property"));
 		int value = ti->get_range(column);
 		int old_value = config->property_get_replication_mode(prop);
-		// We have a hard limit of 64 watchable properties per synchronizer.
+        // ... Check limit ...
 		if (value == SceneReplicationConfig::REPLICATION_MODE_ON_CHANGE && config->get_watch_properties().size() >= 64) {
 			EditorNode::get_singleton()->show_warning(TTR("Each MultiplayerSynchronizer can have no more than 64 watched properties."));
 			ti->set_range(column, old_value);
@@ -426,7 +457,37 @@ void ReplicationEditor::_tree_item_edited() {
 		undo_redo->add_do_method(this, "_update_value", prop, column, value);
 		undo_redo->add_undo_method(this, "_update_value", prop, column, old_value);
 		undo_redo->commit_action();
-	} else {
+
+	} 
+    // --- [新增] ---
+    else if (column == 3) { // Precision
+        undo_redo->create_action(TTR("Set replication precision"));
+        int value = ti->get_range(column); // Enum int
+        int old_value = config->property_get_replication_precision(prop);
+
+        undo_redo->add_do_method(config.ptr(), "property_set_replication_precision", prop, value);
+        undo_redo->add_undo_method(config.ptr(), "property_set_replication_precision", prop, old_value);
+        
+        // 我们需要刷新整个列表，因为 Step 列的可编辑状态依赖于 Precision
+        // 也可以优化为只刷新该行，但 update_config 最安全
+        undo_redo->add_do_method(this, "_update_config"); 
+        undo_redo->add_undo_method(this, "_update_config");
+        undo_redo->commit_action();
+    } 
+    else if (column == 4) { // Step
+        undo_redo->create_action(TTR("Set replication step"));
+        double value = ti->get_range(column);
+        double old_value = config->property_get_replication_step(prop);
+
+        undo_redo->add_do_method(config.ptr(), "property_set_replication_step", prop, value);
+        undo_redo->add_undo_method(config.ptr(), "property_set_replication_step", prop, old_value);
+        // 只更新值即可，不需要刷新整个列表
+        undo_redo->add_do_method(this, "_update_value", prop, column, value);
+        undo_redo->add_undo_method(this, "_update_value", prop, column, old_value);
+        undo_redo->commit_action();
+    }
+    // --- [新增结束] ---
+    else {
 		ERR_FAIL();
 	}
 }
@@ -467,7 +528,8 @@ void ReplicationEditor::_dialog_closed(bool p_confirmed) {
 	deleting = NodePath();
 }
 
-void ReplicationEditor::_update_value(const NodePath &p_prop, int p_column, int p_value) {
+// 修改函数签名
+void ReplicationEditor::_update_value(const NodePath &p_prop, int p_column, const Variant &p_value) {
 	if (!tree->get_root()) {
 		return;
 	}
@@ -475,10 +537,13 @@ void ReplicationEditor::_update_value(const NodePath &p_prop, int p_column, int 
 	while (ti) {
 		if (ti->get_metadata(0).operator NodePath() == p_prop) {
 			if (p_column == 1) {
-				ti->set_checked(p_column, p_value != 0);
-			} else if (p_column == 2) {
+				ti->set_checked(p_column, p_value.operator bool());
+			} else if (p_column == 2 || p_column == 3) {
 				ti->set_range(p_column, p_value);
-			}
+			} else if (p_column == 4) {
+                // Step
+                ti->set_range(p_column, p_value);
+            }
 			return;
 		}
 		ti = ti->get_next();
@@ -499,7 +564,12 @@ void ReplicationEditor::_update_config() {
 	}
 	for (int i = 0; i < props.size(); i++) {
 		const NodePath path = props[i];
-		_add_property(path, config->property_get_spawn(path), config->property_get_replication_mode(path));
+		_add_property(path, 
+			config->property_get_spawn(path), 
+			config->property_get_replication_mode(path)
+			config->property_get_replication_precision(path),
+            config->property_get_replication_step(path)
+		);
 	}
 }
 
@@ -540,14 +610,20 @@ static bool can_sync(const Variant &p_var) {
 			return true;
 	}
 }
-
-void ReplicationEditor::_add_property(const NodePath &p_property, bool p_spawn, SceneReplicationConfig::ReplicationMode p_mode) {
+// 修改函数签名和实现
+void ReplicationEditor::_add_property(const NodePath &p_property, bool p_spawn, SceneReplicationConfig::ReplicationMode p_mode, SceneReplicationConfig::ReplicationPrecision p_precision, float p_step) {
 	String prop = String(p_property);
 	TreeItem *item = tree->create_item();
+	
+    // 设置不可选
 	item->set_selectable(0, false);
 	item->set_selectable(1, false);
 	item->set_selectable(2, false);
 	item->set_selectable(3, false);
+	item->set_selectable(4, false);
+	item->set_selectable(5, false);
+
+    // Column 0: Name (保持原样)
 	item->set_text(0, prop);
 	item->set_metadata(0, prop);
 	Node *root_node = current && !current->get_root_path().is_empty() ? current->get_node(current->get_root_path()) : nullptr;
@@ -572,15 +648,46 @@ void ReplicationEditor::_add_property(const NodePath &p_property, bool p_spawn, 
 	} else {
 		item->set_icon(0, icon);
 	}
-	item->add_button(3, get_theme_icon(SNAME("Remove"), EditorStringName(EditorIcons)));
+
+    // Column 5: Remove Button (移动到最后)
+	item->add_button(5, get_theme_icon(SNAME("Remove"), EditorStringName(EditorIcons)));
 	item->set_text_alignment(1, HORIZONTAL_ALIGNMENT_CENTER);
+
+    // Column 1: Spawn (保持原样)
 	item->set_cell_mode(1, TreeItem::CELL_MODE_CHECK);
 	item->set_checked(1, p_spawn);
 	item->set_editable(1, true);
+
+    // Column 2: Replicate Mode (保持原样)
 	item->set_text_alignment(2, HORIZONTAL_ALIGNMENT_CENTER);
 	item->set_cell_mode(2, TreeItem::CELL_MODE_RANGE);
 	item->set_range_config(2, 0, 2, 1);
 	item->set_text(2, TTR("Never", "Replication Mode") + "," + TTR("Always", "Replication Mode") + "," + TTR("On Change", "Replication Mode"));
 	item->set_range(2, (int)p_mode);
 	item->set_editable(2, true);
+
+    // --- [新增] ---
+    
+    // Column 3: Precision (Enum)
+    item->set_text_alignment(3, HORIZONTAL_ALIGNMENT_CENTER);
+    item->set_cell_mode(3, TreeItem::CELL_MODE_RANGE);
+    item->set_range_config(3, 0, 2, 1); // 对应 Full, Half, Quantized
+    item->set_text(3, TTR("Full") + "," + TTR("Half") + "," + TTR("Quantized"));
+    item->set_range(3, (int)p_precision);
+    item->set_editable(3, true);
+
+    // Column 4: Step (Float)
+    item->set_text_alignment(4, HORIZONTAL_ALIGNMENT_CENTER);
+    item->set_cell_mode(4, TreeItem::CELL_MODE_RANGE);
+    // 设置 Range: min, max, step_size. 
+    item->set_range_config(4, 0.0001, 100000.0, 0.0001); 
+    item->set_range(4, p_step);
+    // 只有当精度选了 Quantized (2) 时，Step 才可编辑
+    bool is_quantized = (p_precision == SceneReplicationConfig::REPLICATION_PRECISION_QUANTIZED);
+    item->set_editable(4, is_quantized);
+    if (!is_quantized) {
+        // 如果不可编辑，稍微调暗或者清除显示 (这里简单设为灰色)
+        item->set_custom_color(4, Color(0.5, 0.5, 0.5, 0.5));
+    }
+    // --- [新增结束] ---
 }
