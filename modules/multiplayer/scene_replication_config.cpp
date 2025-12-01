@@ -53,6 +53,15 @@ bool SceneReplicationConfig::_set(const StringName &p_name, const Variant &p_val
 			property_set_replication_mode(prop.name, mode);
 			return true;
 		}
+		else if (what == "precision") {
+            ERR_FAIL_COND_V(p_value.get_type() != Variant::INT, false);
+            ReplicationPrecision prec = (ReplicationPrecision)p_value.operator int();
+            property_set_replication_precision(prop.name, prec);
+            return true;
+        } else if (what == "step") {
+            property_set_replication_step(prop.name, p_value);
+            return true;
+        }
 		ERR_FAIL_COND_V(p_value.get_type() != Variant::BOOL, false);
 		if (what == "spawn") {
 			property_set_spawn(prop.name, p_value);
@@ -87,7 +96,13 @@ bool SceneReplicationConfig::_get(const StringName &p_name, Variant &r_ret) cons
 		} else if (what == "replication_mode") {
 			r_ret = prop.mode;
 			return true;
-		}
+		} else if (what == "precision") {
+            r_ret = prop.precision;
+            return true;
+        } else if (what == "step") {
+            r_ret = prop.step;
+            return true;
+        }
 	}
 	return false;
 }
@@ -97,6 +112,8 @@ void SceneReplicationConfig::_get_property_list(List<PropertyInfo> *p_list) cons
 		p_list->push_back(PropertyInfo(Variant::STRING, "properties/" + itos(i) + "/path", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR | PROPERTY_USAGE_INTERNAL));
 		p_list->push_back(PropertyInfo(Variant::STRING, "properties/" + itos(i) + "/spawn", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR | PROPERTY_USAGE_INTERNAL));
 		p_list->push_back(PropertyInfo(Variant::INT, "properties/" + itos(i) + "/replication_mode", PROPERTY_HINT_ENUM, "Never,Always,On Change", PROPERTY_USAGE_NO_EDITOR | PROPERTY_USAGE_INTERNAL));
+		p_list->push_back(PropertyInfo(Variant::INT, "properties/" + itos(i) + "/precision", PROPERTY_HINT_ENUM, "Full,Half,Quantized", PROPERTY_USAGE_NO_EDITOR | PROPERTY_USAGE_INTERNAL));
+        p_list->push_back(PropertyInfo(Variant::FLOAT, "properties/" + itos(i) + "/step", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR | PROPERTY_USAGE_INTERNAL));
 	}
 }
 
@@ -267,7 +284,39 @@ const List<NodePath> &SceneReplicationConfig::get_watch_properties() {
 	}
 	return watch_props;
 }
+/// 精度和步长
+SceneReplicationConfig::ReplicationPrecision SceneReplicationConfig::property_get_replication_precision(const NodePath &p_path) {
+    List<ReplicationProperty>::Element *E = properties.find(p_path);
+    ERR_FAIL_COND_V(!E, REPLICATION_PRECISION_FULL);
+    return E->get().precision;
+}
 
+void SceneReplicationConfig::property_set_replication_precision(const NodePath &p_path, ReplicationPrecision p_precision) {
+    List<ReplicationProperty>::Element *E = properties.find(p_path);
+    ERR_FAIL_COND(!E);
+    if (E->get().precision == p_precision) {
+        return;
+    }
+    E->get().precision = p_precision;
+    dirty = true;
+}
+
+float SceneReplicationConfig::property_get_replication_step(const NodePath &p_path) {
+    List<ReplicationProperty>::Element *E = properties.find(p_path);
+    ERR_FAIL_COND_V(!E, 0.0f);
+    return E->get().step;
+}
+
+void SceneReplicationConfig::property_set_replication_step(const NodePath &p_path, float p_step) {
+    List<ReplicationProperty>::Element *E = properties.find(p_path);
+    ERR_FAIL_COND(!E);
+    if (E->get().step == p_step) {
+        return;
+    }
+    E->get().step = p_step;
+    dirty = true;
+}
+/// --精度和步长
 void SceneReplicationConfig::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_properties"), &SceneReplicationConfig::get_properties);
 	ClassDB::bind_method(D_METHOD("add_property", "path", "index"), &SceneReplicationConfig::add_property, DEFVAL(-1));
@@ -278,10 +327,17 @@ void SceneReplicationConfig::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("property_set_spawn", "path", "enabled"), &SceneReplicationConfig::property_set_spawn);
 	ClassDB::bind_method(D_METHOD("property_get_replication_mode", "path"), &SceneReplicationConfig::property_get_replication_mode);
 	ClassDB::bind_method(D_METHOD("property_set_replication_mode", "path", "mode"), &SceneReplicationConfig::property_set_replication_mode);
+	ClassDB::bind_method(D_METHOD("property_get_replication_precision", "path"), &SceneReplicationConfig::property_get_replication_precision);
+    ClassDB::bind_method(D_METHOD("property_set_replication_precision", "path", "precision"), &SceneReplicationConfig::property_set_replication_precision);
+    ClassDB::bind_method(D_METHOD("property_get_replication_step", "path"), &SceneReplicationConfig::property_get_replication_step);
+    ClassDB::bind_method(D_METHOD("property_set_replication_step", "path", "step"), &SceneReplicationConfig::property_set_replication_step);
 
 	BIND_ENUM_CONSTANT(REPLICATION_MODE_NEVER);
 	BIND_ENUM_CONSTANT(REPLICATION_MODE_ALWAYS);
 	BIND_ENUM_CONSTANT(REPLICATION_MODE_ON_CHANGE);
+	BIND_ENUM_CONSTANT(REPLICATION_PRECISION_FULL);
+    BIND_ENUM_CONSTANT(REPLICATION_PRECISION_HALF);
+    BIND_ENUM_CONSTANT(REPLICATION_PRECISION_QUANTIZED);
 
 	// Deprecated.
 	ClassDB::bind_method(D_METHOD("property_get_sync", "path"), &SceneReplicationConfig::property_get_sync);

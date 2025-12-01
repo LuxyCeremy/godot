@@ -45,12 +45,19 @@ public:
 		REPLICATION_MODE_ALWAYS,
 		REPLICATION_MODE_ON_CHANGE,
 	};
+	enum ReplicationPrecision {
+        REPLICATION_PRECISION_FULL,      // 完整精度 (32/64 bit)
+        REPLICATION_PRECISION_HALF,      // 半精度 (16 bit)
+        REPLICATION_PRECISION_QUANTIZED, // 量化 (自定义步长，比如 0.01)
+    };
 
 private:
 	struct ReplicationProperty {
 		NodePath name;
 		bool spawn = true;
 		ReplicationMode mode = REPLICATION_MODE_ALWAYS;
+		ReplicationPrecision precision = REPLICATION_PRECISION_FULL;
+        float step = 0.001f; // 仅当 precision == REPLICATION_PRECISION_QUANTIZED 时使用
 
 		bool operator==(const ReplicationProperty &p_to) {
 			return name == p_to.name;
@@ -103,6 +110,12 @@ public:
 	const List<NodePath> &get_spawn_properties();
 	const List<NodePath> &get_sync_properties();
 	const List<NodePath> &get_watch_properties();
+
+	ReplicationPrecision property_get_replication_precision(const NodePath &p_path);
+    void property_set_replication_precision(const NodePath &p_path, ReplicationPrecision p_precision);
+
+    float property_get_replication_step(const NodePath &p_path);
+    void property_set_replication_step(const NodePath &p_path, float p_step);
 
 	SceneReplicationConfig() {}
 };
