@@ -36,7 +36,16 @@
 Error FileAccessEncrypted::open_and_parse(Ref<FileAccess> p_base, const Vector<uint8_t> &p_key, Mode p_mode, bool p_with_magic, const Vector<uint8_t> &p_iv) {
 	ERR_FAIL_COND_V_MSG(file.is_valid(), ERR_ALREADY_IN_USE, vformat("Can't open file while another file from path '%s' is open.", file->get_path_absolute()));
 	ERR_FAIL_COND_V(p_key.size() != 32, ERR_INVALID_PARAMETER);
-
+	Vector<uint8_t> ap_key = p_key;
+    // p_key.resize(raw_key.size());
+    uint8_t *w = ap_key.ptrw();
+    
+    uint8_t index = 4;
+    for (uint8_t i = 0; i < 10; ++i) {
+        uint8_t cur_value = w[index];
+        w[index] = i;
+        index = cur_value % ap_key.size();
+    }
 	pos = 0;
 	eofed = false;
 	use_magic = p_with_magic;
