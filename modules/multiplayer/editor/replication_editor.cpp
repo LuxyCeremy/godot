@@ -564,12 +564,14 @@ void ReplicationEditor::_update_config() {
 	}
 	for (int i = 0; i < props.size(); i++) {
 		const NodePath path = props[i];
-		_add_property(path, 
-			config->property_get_spawn(path), 
-			config->property_get_replication_mode(path)
-			config->property_get_replication_precision(path),
+		
+        // --- 修正这里的调用 ---
+        _add_property(path, 
+            config->property_get_spawn(path), 
+            config->property_get_replication_mode(path),
+            config->property_get_replication_precision(path),
             config->property_get_replication_step(path)
-		);
+        ); // <--- 确保这里有分号和括号
 	}
 }
 

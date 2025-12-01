@@ -124,5 +124,6 @@ public:
 };
 
 VARIANT_ENUM_CAST(SceneReplicationConfig::ReplicationMode);
+VARIANT_ENUM_CAST(SceneReplicationConfig::ReplicationPrecision); 
 
 #endif // SCENE_REPLICATION_CONFIG_H

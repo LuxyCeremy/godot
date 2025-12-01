@@ -74,11 +74,10 @@ private:
 	void _np_text_submitted(const String &p_newtext);
 	void _tree_item_edited();
 	void _tree_button_pressed(Object *p_item, int p_column, int p_id, MouseButton p_button);
-	void _update_value(const NodePath &p_prop, int p_column, int p_checked);
+    void _update_value(const NodePath &p_prop, int p_column, const Variant &p_value);
 	void _update_config();
 	void _dialog_closed(bool p_confirmed);
-	void _add_property(const NodePath &p_property, bool p_spawn, SceneReplicationConfig::ReplicationMode p_mode, SceneReplicationConfig::ReplicationPrecision p_precision, float p_step);
-
+    void _add_property(const NodePath &p_property, bool p_spawn, SceneReplicationConfig::ReplicationMode p_mode, SceneReplicationConfig::ReplicationPrecision p_precision, float p_step);
 	void _pick_node_filter_text_changed(const String &p_newtext);
 	void _pick_node_select_recursive(TreeItem *p_item, const String &p_filter, Vector<Node *> &p_select_candidates);
 	void _pick_node_selected(NodePath p_path);

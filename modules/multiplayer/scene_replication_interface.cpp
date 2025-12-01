@@ -899,7 +899,7 @@ void SceneReplicationInterface::_send_delta(int p_peer, const HashSet<ObjectID> 
 			i++;
 		}
 		int size;
-		Error err = _encode_custom_state(varp, delta_props, sync->get_replication_config_ptr().ptr(), nullptr, size);
+		Error err = _encode_custom_state(varp, delta_props, sync->get_replication_config_ptr(), nullptr, size);
 		ERR_CONTINUE_MSG(err != OK, "Unable to encode delta state.");
 
 		ERR_CONTINUE_MSG(size > delta_mtu, vformat("Synchronizer delta bigger than MTU will not be sent (%d > %d): %s", size, delta_mtu, sync->get_path()));
@@ -913,7 +913,7 @@ void SceneReplicationInterface::_send_delta(int p_peer, const HashSet<ObjectID> 
 			ofs += encode_uint32(sync->get_net_id(), &ptr[ofs]);
 			ofs += encode_uint64(indexes, &ptr[ofs]);
 			ofs += encode_uint32(size, &ptr[ofs]);
-			_encode_custom_state(varp, delta_props, sync->get_replication_config_ptr().ptr(), &ptr[ofs], size);
+			_encode_custom_state(varp, delta_props, sync->get_replication_config_ptr(), &ptr[ofs], size);
 			ofs += size;
 		}
 #ifdef DEBUG_ENABLED
@@ -948,7 +948,7 @@ Error SceneReplicationInterface::on_delta_receive(int p_from, const uint8_t *p_b
 		Vector<Variant> vars;
 		vars.resize(props.size());
 		int consumed = 0;
-        Error err = _decode_custom_state(vars, p_buffer + ofs, size, consumed, props, sync->get_replication_config_ptr().ptr());
+		Error err = _decode_custom_state(vars, p_buffer + ofs, size, consumed, props, sync->get_replication_config_ptr());
 		ERR_FAIL_COND_V(err != OK, err);
 		ERR_FAIL_COND_V(uint32_t(consumed) != size, ERR_INVALID_DATA);
 		err = MultiplayerSynchronizer::set_state(props, node, vars);
@@ -990,8 +990,8 @@ void SceneReplicationInterface::_send_sync(int p_peer, const HashSet<ObjectID> &
 		const List<NodePath> props = sync->get_replication_config_ptr()->get_sync_properties();
 		Error err = MultiplayerSynchronizer::get_state(props, node, vars, varp);
 		ERR_CONTINUE_MSG(err != OK, "Unable to retrieve sync state.");
-        err = _encode_custom_state(varp, props, sync->get_replication_config_ptr().ptr(), nullptr, size);
-        ERR_CONTINUE_MSG(err != OK, "Unable to calculate custom sync state size.");
+		err = _encode_custom_state(varp, props, sync->get_replication_config_ptr(), nullptr, size);
+		ERR_CONTINUE_MSG(err != OK, "Unable to calculate custom sync state size.");
 		// TODO Handle single state above MTU.
 		ERR_CONTINUE_MSG(size > sync_mtu, vformat("Node states bigger than MTU will not be sent (%d > %d): %s", size, sync_mtu, node->get_path()));
 		if (ofs + 4 + 4 + size > sync_mtu) {
@@ -1002,7 +1002,7 @@ void SceneReplicationInterface::_send_sync(int p_peer, const HashSet<ObjectID> &
 		if (size) {
 			ofs += encode_uint32(sync->get_net_id(), &ptr[ofs]);
 			ofs += encode_uint32(size, &ptr[ofs]);
-            _encode_custom_state(varp, props, sync->get_replication_config_ptr().ptr(), &ptr[ofs], size);
+            _encode_custom_state(varp, props, sync->get_replication_config_ptr(), &ptr[ofs], size);
 			ofs += size;
 		}
 #ifdef DEBUG_ENABLED
@@ -1050,7 +1050,7 @@ Error SceneReplicationInterface::on_sync_receive(int p_from, const uint8_t *p_bu
 		Vector<Variant> vars;
 		vars.resize(props.size());
 		int consumed;
-		Error err = _decode_custom_state(vars, &p_buffer[ofs], size, consumed, props, sync->get_replication_config_ptr().ptr());
+		Error err = _decode_custom_state(vars, &p_buffer[ofs], size, consumed, props, sync->get_replication_config_ptr());
 
 		ERR_FAIL_COND_V(err, err);
 		err = MultiplayerSynchronizer::set_state(props, node, vars);
