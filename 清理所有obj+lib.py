@@ -20,6 +20,6 @@ print("Cleanup completed.")
 chcp 65001
 $env:SCRIPT_AES256_ENCRYPTION_KEY="fb496c0ac198a46d0a8852e38c9ee0c6f32e5f0069bec566357ec289671816e0"
 
-scons platform=windows
-scons platform=windows target=template_release
+scons platform=windows d3d12=yes
+scons platform=windows target=template_release d3d12=yes
 '''
